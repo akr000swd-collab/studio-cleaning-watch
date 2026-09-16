@@ -140,12 +140,14 @@ function hasCleaningAfter(
   afterTime: Date,
   searchEnd: Date,
   cleaningEvents: CalEvent[],
-  studio: StudioConfig
+  studio: StudioConfig,
+  bufferMinutes: number
 ): boolean {
+  const bufferMs = bufferMinutes * 60 * 1000;
   return cleaningEvents.some((ev) => {
     if (!isCleaningForStudio(ev, studio)) return false;
     return (
-      ev.start.getTime() >= afterTime.getTime() - 1000 &&
+      ev.start.getTime() >= afterTime.getTime() - bufferMs &&
       ev.start.getTime() <= searchEnd.getTime()
     );
   });
@@ -283,7 +285,8 @@ export async function computeStudioStatus(
       last.end,
       lookahead,
       cleaningEvents,
-      studio
+      studio,
+      config.coverageBufferMinutes
     );
     if (!coveredAfter) {
       const minutesSinceEnd = Math.round(
