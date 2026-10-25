@@ -255,8 +255,10 @@ export async function computeStudioStatus(
     );
     if (covered) continue;
 
-    // 1時間以上前に終わっている過去のギャップは表示のノイズになるため無視する
-    if (next.start.getTime() < now.getTime() - 60 * 60 * 1000) continue;
+    // 利用がまだ続いている間は、開始から何時間経っていても表示し続ける。
+    // 完全に終わった利用について、終了から1時間以上経っている過去のギャップだけを
+    // 表示のノイズとみなして無視する。
+    if (next.end.getTime() < now.getTime() - 60 * 60 * 1000) continue;
 
     const { severity, minutesUntilDue } = severityForDeadline(
       now,
