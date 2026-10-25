@@ -296,6 +296,20 @@ function Dashboard() {
               🔊 音を有効にする
             </button>
           )}
+          <button
+            onClick={() => fetchStatus()}
+            title="ページを再読み込みせずに、最新のカレンダー状態だけを取得します(音の有効化状態は維持されます)"
+            style={{
+              padding: "8px 14px",
+              borderRadius: 8,
+              border: "1px solid #334155",
+              background: "#1e293b",
+              color: "#f8fafc",
+              cursor: "pointer",
+            }}
+          >
+            🔄 今すぐ更新
+          </button>
           <div style={{ fontSize: 12, color: "#94a3b8" }}>
             {data
               ? `最終更新: ${new Date(data.generatedAt).toLocaleTimeString("ja-JP")}`
