@@ -50,8 +50,12 @@ const SEVERITY_COLOR: Record<Severity, string> = {
 };
 
 function isAlarming(s: Severity) {
-  return s === "critical_soon" || s === "critical_active";
+  return s === "warning" || s === "critical_soon" || s === "critical_active";
 }
+
+// ブラウザを更新しても毎回「音を有効にする」を押さずに済むように、
+// 一度有効化したことを覚えておくためのキー
+const SOUND_ENABLED_KEY = "swc_sound_enabled";
 
 function formatTime(iso: string | null) {
   if (!iso) return "-";
@@ -118,6 +122,29 @@ function Dashboard() {
     const id = setInterval(fetchStatus, POLL_MS);
     return () => clearInterval(id);
   }, [fetchStatus]);
+
+  // 以前このブラウザで「音を有効にする」を押したことがあれば、
+  // ページ読み込み時に自動で再有効化を試みる(ブラウザの自動再生制限により
+  // 必ず成功するとは限らないが、成功すればボタンを押し直す必要がなくなる)
+  useEffect(() => {
+    let storedEnabled = false;
+    try {
+      storedEnabled = window.localStorage.getItem(SOUND_ENABLED_KEY) === "1";
+    } catch {}
+    if (!storedEnabled) return;
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio
+      .play()
+      .then(() => {
+        audio.pause();
+        audio.currentTime = 0;
+        setSoundEnabled(true);
+      })
+      .catch(() => {
+        // ブラウザにブロックされた場合は、ボタンでの手動有効化に任せる
+      });
+  }, []);
 
   function applyRange() {
     const params = new URLSearchParams();
@@ -249,6 +276,9 @@ function Dashboard() {
             <button
               onClick={() => {
                 setSoundEnabled(true);
+                try {
+                  window.localStorage.setItem(SOUND_ENABLED_KEY, "1");
+                } catch {}
                 audioRef.current?.play().then(() => {
                   audioRef.current?.pause();
                   if (audioRef.current) audioRef.current.currentTime = 0;
