@@ -41,20 +41,11 @@ type AlarmItem = {
   toTime: string | null;
 };
 
-// ロケハン予定がうまく拾えていない原因を切り分けるための、一時的な診断情報
-type RokehanDebug = {
-  calendarId: string | null;
-  rawEventCount: number;
-  titles: string[];
-  fetchError: string | null;
-};
-
 type ApiResponse = {
   generatedAt: string;
   range: { from: string; to: string } | null;
   statuses: StudioStatus[];
   rokehanCards: RokehanCard[];
-  rokehanDebug?: RokehanDebug;
 };
 
 const POLL_MS = Number(process.env.NEXT_PUBLIC_POLL_INTERVAL_MS ?? "30000");
@@ -541,41 +532,6 @@ function Dashboard() {
       {data && (
         <>
           <h2 style={{ fontSize: 18, margin: "28px 0 16px" }}>ロケハン監視ボード</h2>
-          {data.rokehanDebug && (
-            <div
-              style={{
-                marginBottom: 16,
-                fontSize: 12,
-                color: "#94a3b8",
-                background: "#0f172a",
-                border: "1px solid #334155",
-                borderRadius: 8,
-                padding: 12,
-                lineHeight: 1.7,
-              }}
-            >
-              <div style={{ fontWeight: 700, color: "#cbd5e1" }}>
-                【診断情報・一時的】
-              </div>
-              <div>カレンダーID: {data.rokehanDebug.calendarId ?? "(未設定)"}</div>
-              <div>取得件数: {data.rokehanDebug.rawEventCount}件</div>
-              {data.rokehanDebug.fetchError && (
-                <div style={{ color: "#fca5a5" }}>
-                  取得エラー: {data.rokehanDebug.fetchError}
-                </div>
-              )}
-              {data.rokehanDebug.titles.length > 0 && (
-                <div>
-                  タイトル一覧:
-                  <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-                    {data.rokehanDebug.titles.map((t, i) => (
-                      <li key={i}>{t}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
           {sortedRokehanCards.length === 0 ? (
             <div style={{ color: "#94a3b8", fontSize: 14 }}>
               今後のロケハン予定はありません
