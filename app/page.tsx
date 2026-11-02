@@ -529,17 +529,22 @@ function Dashboard() {
         )}
       </div>
 
-      {sortedRokehanCards.length > 0 && (
+      {data && (
         <>
           <h2 style={{ fontSize: 18, margin: "28px 0 16px" }}>ロケハン監視ボード</h2>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-              gap: 16,
-            }}
-          >
-            {sortedRokehanCards.map((c, idx) => (
+          {sortedRokehanCards.length === 0 ? (
+            <div style={{ color: "#94a3b8", fontSize: 14 }}>
+              今後のロケハン予定はありません
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                gap: 16,
+              }}
+            >
+              {sortedRokehanCards.map((c, idx) => (
               <div
                 key={idx}
                 style={{
@@ -590,6 +595,7 @@ function Dashboard() {
               </div>
             ))}
           </div>
+          )}
         </>
       )}
 
