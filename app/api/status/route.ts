@@ -38,13 +38,14 @@ export async function GET(req: NextRequest) {
   try {
     const config = getConfig();
     const range = parseRange(req);
-    const statuses = await getAllStudioStatuses(config, range);
+    const { statuses, rokehanCards } = await getAllStudioStatuses(config, range);
     return NextResponse.json({
       generatedAt: new Date().toISOString(),
       range: range
         ? { from: range.from.toISOString(), to: range.to.toISOString() }
         : null,
       statuses,
+      rokehanCards,
     });
   } catch (e) {
     console.error(e);

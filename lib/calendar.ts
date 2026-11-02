@@ -9,18 +9,27 @@ import {
 export type Severity = "ok" | "warning" | "critical_soon" | "critical_active";
 
 // 「清掃-使用-清掃-使用-清掃」の連鎖のうち、清掃が見つからなかった1箇所を表す
-// (location_scout: ロケハン予定がスタジオの利用予定と重なっている)
 export type Issue = {
-  kind: "before_first" | "between" | "after_last" | "location_scout";
+  kind: "before_first" | "between" | "after_last";
   severity: Severity;
   message: string;
   // between: 前の利用の終了時刻 / after_last: 最後の利用の終了時刻 / before_first: null
-  // location_scout: ロケハン予定の開始時刻
   fromTime: string | null;
   // between: 次の利用の開始時刻 / before_first: 最初の利用の開始時刻 / after_last: null
-  // location_scout: ロケハン予定の終了時刻
   toTime: string | null;
   minutesUntilDue: number | null;
+};
+
+// ロケハン監視ボードに表示する1件分のカード(ロケハン予定1件につき1枚)。
+// conflict が true のときだけ、そのスタジオの利用予約と時間が重なっている。
+export type RokehanCard = {
+  studio: string; // マッチしたスタジオ名
+  summary: string; // ロケハン予定のタイトル(そのまま表示用)
+  fromTime: string; // ロケハン予定の開始時刻
+  toTime: string; // ロケハン予定の終了時刻
+  severity: Severity; // 重複がなければ ok
+  conflict: boolean; // 利用予約との重複があるか
+  message: string; // 表示用メッセージ(重複がなければ「問題なし」)
 };
 
 export type StudioStatus = {
@@ -338,56 +347,57 @@ function worstSeverity(issues: Issue[]): Severity {
   );
 }
 
-// ロケハン予定(スタジオの下見)が、同じスタジオの利用予定と重なっていないかを判定する。
-// タイトルに含まれるスタジオ名で対象スタジオを判定する点は清掃予定の判定と同じ仕組みを流用している。
-function computeLocationScoutIssues(
+// ロケハン予定(スタジオの下見)1件について、同じスタジオの利用予定と重なっていないかを判定し、
+// ロケハン監視ボード用のカードを1枚作る。重なりがなくてもカードは必ず作る(問題なし表示のため)。
+function buildRokehanCard(
   studio: StudioConfig,
-  rokehanEvents: CalEvent[],
+  rokehan: CalEvent,
   reservationEvents: CalEvent[],
   now: Date,
   config: AppConfig
-): Issue[] {
-  const matchedRokehan = rokehanEvents.filter((ev) =>
-    isCleaningForStudio(ev, studio)
-  );
-  if (matchedRokehan.length === 0) return [];
-
+): RokehanCard {
   const mergedReservations = mergeOverlappingReservations(reservationEvents);
-  const issues: Issue[] = [];
+  const conflicting = mergedReservations.find((res) => eventsOverlap(rokehan, res));
 
-  for (const rokehan of matchedRokehan) {
-    const conflicting = mergedReservations.find((res) =>
-      eventsOverlap(rokehan, res)
-    );
-    if (!conflicting) continue;
-
-    const { severity, minutesUntilDue } = severityForDeadline(
-      now,
-      rokehan.start,
-      config.alertThresholdMinutes
-    );
-    issues.push({
-      kind: "location_scout",
-      severity,
-      message:
-        severity === "critical_active"
-          ? `ロケハン予定「${rokehan.summary}」が、スタジオの利用時間中に重なっています`
-          : severity === "critical_soon"
-          ? `ロケハン予定「${rokehan.summary}」が、あと${minutesUntilDue}分で利用予定と重なる時間に入ります`
-          : `ロケハン予定「${rokehan.summary}」が、スタジオの利用予定と重なっています`,
+  if (!conflicting) {
+    return {
+      studio: studio.name,
+      summary: rokehan.summary,
       fromTime: rokehan.start.toISOString(),
       toTime: rokehan.end.toISOString(),
-      minutesUntilDue,
-    });
+      severity: "ok",
+      conflict: false,
+      message: "問題なし",
+    };
   }
 
-  return issues;
+  const { severity, minutesUntilDue } = severityForDeadline(
+    now,
+    rokehan.start,
+    config.alertThresholdMinutes
+  );
+  const message =
+    severity === "critical_active"
+      ? "スタジオの利用時間中に重なっています"
+      : severity === "critical_soon"
+      ? `あと${minutesUntilDue}分で利用予定と重なる時間に入ります`
+      : "スタジオの利用予定と重なっています";
+
+  return {
+    studio: studio.name,
+    summary: rokehan.summary,
+    fromTime: rokehan.start.toISOString(),
+    toTime: rokehan.end.toISOString(),
+    severity,
+    conflict: true,
+    message,
+  };
 }
 
 export async function getAllStudioStatuses(
   config: AppConfig,
   range: RangeParams
-): Promise<StudioStatus[]> {
+): Promise<{ statuses: StudioStatus[]; rokehanCards: RokehanCard[] }> {
   if (config.studios.length === 0) {
     throw new Error(
       "STUDIOS_CONFIG が設定されていません。環境変数を確認してください。"
@@ -431,6 +441,9 @@ export async function getAllStudioStatuses(
     ? await fetchEvents(client, config.rokehanCalendarId, now, rokehanLookaheadEnd)
     : [];
 
+  // ロケハン監視ボード用のカード(スタジオのカードには混ぜず、別のリストとして集める)
+  const rokehanCards: RokehanCard[] = [];
+
   const statuses = await Promise.all(
     config.studios.map(async (studio) => {
       const reservationEvents = await fetchEvents(
@@ -463,23 +476,19 @@ export async function getAllStudioStatuses(
         now,
         rokehanLookaheadEnd
       );
-      const locationScoutIssues = computeLocationScoutIssues(
-        studio,
-        matchedRokehan,
-        rokehanWindowReservations,
-        now,
-        config
-      );
-      if (locationScoutIssues.length === 0) return status;
-
-      const mergedIssues = [...status.issues, ...locationScoutIssues];
-      return {
-        ...status,
-        issues: mergedIssues,
-        severity: worstSeverity(mergedIssues),
-      };
+      for (const rokehan of matchedRokehan) {
+        rokehanCards.push(
+          buildRokehanCard(studio, rokehan, rokehanWindowReservations, now, config)
+        );
+      }
+      return status;
     })
   );
 
-  return statuses;
+  // ロケハン開始時刻順に並べておく
+  rokehanCards.sort(
+    (a, b) => new Date(a.fromTime).getTime() - new Date(b.fromTime).getTime()
+  );
+
+  return { statuses, rokehanCards };
 }

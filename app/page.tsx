@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 type Severity = "ok" | "warning" | "critical_soon" | "critical_active";
 
 type Issue = {
-  kind: "before_first" | "between" | "after_last" | "location_scout";
+  kind: "before_first" | "between" | "after_last";
   severity: Severity;
   message: string;
   fromTime: string | null;
@@ -20,10 +20,32 @@ type StudioStatus = {
   issues: Issue[];
 };
 
+type RokehanCard = {
+  studio: string;
+  summary: string;
+  fromTime: string;
+  toTime: string;
+  severity: Severity;
+  conflict: boolean;
+  message: string;
+};
+
+// 画面上部の警報バナー・タイトル点滅に使う、スタジオ清掃とロケハン重複を
+// 同じ形にまとめた1件分の情報
+type AlarmItem = {
+  studio: string;
+  kind: string;
+  severity: Severity;
+  message: string;
+  fromTime: string | null;
+  toTime: string | null;
+};
+
 type ApiResponse = {
   generatedAt: string;
   range: { from: string; to: string } | null;
   statuses: StudioStatus[];
+  rokehanCards: RokehanCard[];
 };
 
 const POLL_MS = Number(process.env.NEXT_PUBLIC_POLL_INTERVAL_MS ?? "30000");
@@ -49,21 +71,13 @@ const SEVERITY_COLOR: Record<Severity, string> = {
   critical_active: "#991b1b",
 };
 
-// ロケハン予定の重複が原因のときは、清掃用の文言だと紛らわしいので専用の表示にする
-const LOCATION_SCOUT_LABEL: Record<Severity, string> = {
+// ロケハン監視ボードのカード用の表示文言(問題なしのときは清掃と同じ「問題なし」)
+const ROKEHAN_SEVERITY_LABEL: Record<Severity, string> = {
   ok: "問題なし",
-  warning: "ロケハン重複あり",
-  critical_soon: "まもなくロケハン重複",
-  critical_active: "ロケハンと利用が重複",
+  warning: "予約と重複あり",
+  critical_soon: "まもなく予約と重複",
+  critical_active: "予約と重複中",
 };
-
-function badgeLabel(status: StudioStatus): string {
-  const worstIssue = status.issues.find((i) => i.severity === status.severity);
-  if (worstIssue?.kind === "location_scout") {
-    return LOCATION_SCOUT_LABEL[status.severity];
-  }
-  return SEVERITY_LABEL[status.severity];
-}
 
 function isAlarming(s: Severity) {
   return s === "warning" || s === "critical_soon" || s === "critical_active";
@@ -173,9 +187,27 @@ function Dashboard() {
     router.push("/");
   }
 
-  const allIssues = (data?.statuses ?? []).flatMap((s) =>
-    s.issues.map((issue) => ({ ...issue, studio: s.studio }))
+  const studioAlarmItems: AlarmItem[] = (data?.statuses ?? []).flatMap((s) =>
+    s.issues.map((issue) => ({
+      studio: s.studio,
+      kind: issue.kind,
+      severity: issue.severity,
+      message: issue.message,
+      fromTime: issue.fromTime,
+      toTime: issue.toTime,
+    }))
   );
+  const rokehanAlarmItems: AlarmItem[] = (data?.rokehanCards ?? [])
+    .filter((c) => c.conflict)
+    .map((c) => ({
+      studio: c.studio,
+      kind: "location_scout",
+      severity: c.severity,
+      message: `ロケハン予定「${c.summary}」が${c.message}`,
+      fromTime: c.fromTime,
+      toTime: c.toTime,
+    }));
+  const allIssues: AlarmItem[] = [...studioAlarmItems, ...rokehanAlarmItems];
   const alarmingIssues = allIssues.filter((i) => isAlarming(i.severity));
   const currentSignature = alarmingIssues
     .map((i) => `${i.studio}:${i.kind}:${i.fromTime}:${i.toTime}`)
@@ -225,6 +257,12 @@ function Dashboard() {
     (a, b) => SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity]
   );
 
+  const sortedRokehanCards = [...(data?.rokehanCards ?? [])].sort((a, b) => {
+    const diff = SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity];
+    if (diff !== 0) return diff;
+    return new Date(a.fromTime).getTime() - new Date(b.fromTime).getTime();
+  });
+
   return (
     <div style={{ minHeight: "100vh", padding: "24px" }}>
       <audio ref={audioRef} src="/alarm.mp3" loop preload="auto" />
@@ -246,7 +284,7 @@ function Dashboard() {
         >
           <div>
             <div style={{ fontSize: 20, fontWeight: 700 }}>
-              ⚠️ 清掃されないまま利用が始まりそうです
+              ⚠️ 警報が発生しています
             </div>
             <div style={{ marginTop: 6, opacity: 0.9, display: "flex", flexDirection: "column", gap: 2 }}>
               {alarmingIssues.map((i, idx) => (
@@ -456,7 +494,7 @@ function Dashboard() {
                   background: SEVERITY_COLOR[s.severity],
                 }}
               >
-                {badgeLabel(s)}
+                {SEVERITY_LABEL[s.severity]}
               </div>
             </div>
             {s.issues.length === 0 ? (
@@ -468,23 +506,15 @@ function Dashboard() {
                 {s.issues.map((issue, idx) => (
                   <div key={idx} style={{ fontSize: 13, color: "#cbd5e1", borderTop: idx > 0 ? "1px solid #334155" : "none", paddingTop: idx > 0 ? 8 : 0 }}>
                     <div>{issue.message}</div>
-                    {issue.kind === "location_scout" ? (
+                    {issue.toTime && (
                       <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                        ロケハン時間: {formatTime(issue.fromTime)}〜{formatTime(issue.toTime)}
+                        対象の利用開始: {formatTime(issue.toTime)}
                       </div>
-                    ) : (
-                      <>
-                        {issue.toTime && (
-                          <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                            対象の利用開始: {formatTime(issue.toTime)}
-                          </div>
-                        )}
-                        {!issue.toTime && issue.fromTime && (
-                          <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                            利用終了: {formatTime(issue.fromTime)}
-                          </div>
-                        )}
-                      </>
+                    )}
+                    {!issue.toTime && issue.fromTime && (
+                      <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                        利用終了: {formatTime(issue.fromTime)}
+                      </div>
                     )}
                   </div>
                 ))}
@@ -498,6 +528,70 @@ function Dashboard() {
           </div>
         )}
       </div>
+
+      {sortedRokehanCards.length > 0 && (
+        <>
+          <h2 style={{ fontSize: 18, margin: "28px 0 16px" }}>ロケハン監視ボード</h2>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+              gap: 16,
+            }}
+          >
+            {sortedRokehanCards.map((c, idx) => (
+              <div
+                key={idx}
+                style={{
+                  background: "#1e293b",
+                  borderRadius: 12,
+                  padding: 18,
+                  borderLeft: `6px solid ${SEVERITY_COLOR[c.severity]}`,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>{c.studio}</div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      padding: "3px 10px",
+                      borderRadius: 999,
+                      background: SEVERITY_COLOR[c.severity],
+                    }}
+                  >
+                    {ROKEHAN_SEVERITY_LABEL[c.severity]}
+                  </div>
+                </div>
+                <div style={{ marginTop: 10, fontSize: 14, color: "#cbd5e1" }}>
+                  {c.summary}
+                </div>
+                <div style={{ marginTop: 4, fontSize: 12, color: "#94a3b8" }}>
+                  ロケハン時間: {formatTime(c.fromTime)}〜{formatTime(c.toTime)}
+                </div>
+                {c.conflict && (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: 13,
+                      color: "#fca5a5",
+                      fontWeight: 700,
+                    }}
+                  >
+                    ⚠️ {c.message}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <style jsx global>{`
         @keyframes pulse {
