@@ -38,7 +38,10 @@ export async function GET(req: NextRequest) {
   try {
     const config = getConfig();
     const range = parseRange(req);
-    const { statuses, rokehanCards } = await getAllStudioStatuses(config, range);
+    const { statuses, rokehanCards, rokehanDebug } = await getAllStudioStatuses(
+      config,
+      range
+    );
     return NextResponse.json({
       generatedAt: new Date().toISOString(),
       range: range
@@ -46,6 +49,8 @@ export async function GET(req: NextRequest) {
         : null,
       statuses,
       rokehanCards,
+      // ロケハン予定の検知状況を確認するための一時的な診断情報(原因が分かったら削除予定)
+      rokehanDebug,
     });
   } catch (e) {
     console.error(e);

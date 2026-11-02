@@ -394,10 +394,23 @@ function buildRokehanCard(
   };
 }
 
+// ロケハン予定がうまく拾えていないときに原因を切り分けるための一時的な診断情報。
+// (カレンダーからそもそも何件取得できているか/タイトルがどう見えているかを確認する用)
+export type RokehanDebug = {
+  calendarId: string | null;
+  rawEventCount: number;
+  titles: string[];
+  fetchError: string | null;
+};
+
 export async function getAllStudioStatuses(
   config: AppConfig,
   range: RangeParams
-): Promise<{ statuses: StudioStatus[]; rokehanCards: RokehanCard[] }> {
+): Promise<{
+  statuses: StudioStatus[];
+  rokehanCards: RokehanCard[];
+  rokehanDebug: RokehanDebug;
+}> {
   if (config.studios.length === 0) {
     throw new Error(
       "STUDIOS_CONFIG が設定されていません。環境変数を確認してください。"
@@ -437,9 +450,26 @@ export async function getAllStudioStatuses(
   const rokehanLookaheadEnd = new Date(
     now.getTime() + config.rokehanLookaheadDays * 24 * 60 * 60 * 1000
   );
-  const allRokehanEvents = config.rokehanCalendarId
-    ? await fetchEvents(client, config.rokehanCalendarId, now, rokehanLookaheadEnd)
-    : [];
+  let allRokehanEvents: CalEvent[] = [];
+  let rokehanFetchError: string | null = null;
+  if (config.rokehanCalendarId) {
+    try {
+      allRokehanEvents = await fetchEvents(
+        client,
+        config.rokehanCalendarId,
+        now,
+        rokehanLookaheadEnd
+      );
+    } catch (e) {
+      rokehanFetchError = (e as Error).message;
+    }
+  }
+  const rokehanDebug: RokehanDebug = {
+    calendarId: config.rokehanCalendarId,
+    rawEventCount: allRokehanEvents.length,
+    titles: allRokehanEvents.map((ev) => ev.summary),
+    fetchError: rokehanFetchError,
+  };
 
   // ロケハン監視ボード用のカード(スタジオのカードには混ぜず、別のリストとして集める)
   const rokehanCards: RokehanCard[] = [];
@@ -490,5 +520,5 @@ export async function getAllStudioStatuses(
     (a, b) => new Date(a.fromTime).getTime() - new Date(b.fromTime).getTime()
   );
 
-  return { statuses, rokehanCards };
+  return { statuses, rokehanCards, rokehanDebug };
 }
