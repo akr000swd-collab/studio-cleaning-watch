@@ -19,6 +19,8 @@ export type AppConfig = {
   coverageBufferMinutes: number; // 清掃予定が前の利用終了より多少早く始まっていても許容する分数
   rangeLookbackDays: number; // 最初の利用より前の清掃予定を何日分遡って探すか(期間指定の有無によらず常に適用)
   rangeLookaheadDays: number; // 最後の利用より後の清掃予定を何日分先読みして探すか(期間指定の有無によらず常に適用)
+  rokehanCalendarId: string | null; // ロケハン予定が入っているGoogleカレンダーID(未設定ならロケハン重複チェックは無効)
+  rokehanLookaheadDays: number; // ロケハン予定を何日先まで監視して、利用予定との重複をチェックするか
 };
 
 function parseJsonEnv<T>(name: string, fallback: T): T {
@@ -47,6 +49,10 @@ export function getConfig(): AppConfig {
   );
   const rangeLookbackDays = Number(process.env.RANGE_LOOKBACK_DAYS ?? "7");
   const rangeLookaheadDays = Number(process.env.RANGE_LOOKAHEAD_DAYS ?? "7");
+  const rokehanCalendarId = process.env.ROKEHAN_CALENDAR_ID || null;
+  const rokehanLookaheadDays = Number(
+    process.env.ROKEHAN_LOOKAHEAD_DAYS ?? "14"
+  );
 
   return {
     studios,
@@ -57,6 +63,8 @@ export function getConfig(): AppConfig {
     coverageBufferMinutes,
     rangeLookbackDays,
     rangeLookaheadDays,
+    rokehanCalendarId,
+    rokehanLookaheadDays,
   };
 }
 

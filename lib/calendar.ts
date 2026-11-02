@@ -9,13 +9,16 @@ import {
 export type Severity = "ok" | "warning" | "critical_soon" | "critical_active";
 
 // 「清掃-使用-清掃-使用-清掃」の連鎖のうち、清掃が見つからなかった1箇所を表す
+// (location_scout: ロケハン予定がスタジオの利用予定と重なっている)
 export type Issue = {
-  kind: "before_first" | "between" | "after_last";
+  kind: "before_first" | "between" | "after_last" | "location_scout";
   severity: Severity;
   message: string;
   // between: 前の利用の終了時刻 / after_last: 最後の利用の終了時刻 / before_first: null
+  // location_scout: ロケハン予定の開始時刻
   fromTime: string | null;
   // between: 次の利用の開始時刻 / before_first: 最初の利用の開始時刻 / after_last: null
+  // location_scout: ロケハン予定の終了時刻
   toTime: string | null;
   minutesUntilDue: number | null;
 };
@@ -113,6 +116,11 @@ function studioNameVariants(studio: StudioConfig): string[] {
 function isCleaningForStudio(event: CalEvent, studio: StudioConfig): boolean {
   const summary = normalizeText(event.summary);
   return studioNameVariants(studio).some((variant) => summary.includes(variant));
+}
+
+// 2つの予定の時間帯が重なっているか判定する
+function eventsOverlap(a: CalEvent, b: CalEvent): boolean {
+  return a.start.getTime() < b.end.getTime() && a.end.getTime() > b.start.getTime();
 }
 
 // [rangeStart, rangeEnd] の間で終わる清掃予定が存在するか判定する
@@ -312,18 +320,68 @@ export async function computeStudioStatus(
     }
   }
 
-  const order: Record<Severity, number> = {
-    ok: 0,
-    warning: 1,
-    critical_soon: 2,
-    critical_active: 3,
-  };
-  const worst = issues.reduce<Severity>(
-    (acc, issue) => (order[issue.severity] > order[acc] ? issue.severity : acc),
+  return { studio: studio.name, severity: worstSeverity(issues), issues };
+}
+
+const SEVERITY_ORDER: Record<Severity, number> = {
+  ok: 0,
+  warning: 1,
+  critical_soon: 2,
+  critical_active: 3,
+};
+
+function worstSeverity(issues: Issue[]): Severity {
+  return issues.reduce<Severity>(
+    (acc, issue) =>
+      SEVERITY_ORDER[issue.severity] > SEVERITY_ORDER[acc] ? issue.severity : acc,
     "ok"
   );
+}
 
-  return { studio: studio.name, severity: worst, issues };
+// ロケハン予定(スタジオの下見)が、同じスタジオの利用予定と重なっていないかを判定する。
+// タイトルに含まれるスタジオ名で対象スタジオを判定する点は清掃予定の判定と同じ仕組みを流用している。
+function computeLocationScoutIssues(
+  studio: StudioConfig,
+  rokehanEvents: CalEvent[],
+  reservationEvents: CalEvent[],
+  now: Date,
+  config: AppConfig
+): Issue[] {
+  const matchedRokehan = rokehanEvents.filter((ev) =>
+    isCleaningForStudio(ev, studio)
+  );
+  if (matchedRokehan.length === 0) return [];
+
+  const mergedReservations = mergeOverlappingReservations(reservationEvents);
+  const issues: Issue[] = [];
+
+  for (const rokehan of matchedRokehan) {
+    const conflicting = mergedReservations.find((res) =>
+      eventsOverlap(rokehan, res)
+    );
+    if (!conflicting) continue;
+
+    const { severity, minutesUntilDue } = severityForDeadline(
+      now,
+      rokehan.start,
+      config.alertThresholdMinutes
+    );
+    issues.push({
+      kind: "location_scout",
+      severity,
+      message:
+        severity === "critical_active"
+          ? `ロケハン予定「${rokehan.summary}」が、スタジオの利用時間中に重なっています`
+          : severity === "critical_soon"
+          ? `ロケハン予定「${rokehan.summary}」が、あと${minutesUntilDue}分で利用予定と重なる時間に入ります`
+          : `ロケハン予定「${rokehan.summary}」が、スタジオの利用予定と重なっています`,
+      fromTime: rokehan.start.toISOString(),
+      toTime: rokehan.end.toISOString(),
+      minutesUntilDue,
+    });
+  }
+
+  return issues;
 }
 
 export async function getAllStudioStatuses(
@@ -364,6 +422,15 @@ export async function getAllStudioStatuses(
   );
   const allCleaningEvents = cleaningEventLists.flat();
 
+  // ロケハン予定(今日から rokehanLookaheadDays 日先まで)を取得しておく
+  // (未設定の場合はロケハン重複チェック自体を行わない)
+  const rokehanLookaheadEnd = new Date(
+    now.getTime() + config.rokehanLookaheadDays * 24 * 60 * 60 * 1000
+  );
+  const allRokehanEvents = config.rokehanCalendarId
+    ? await fetchEvents(client, config.rokehanCalendarId, now, rokehanLookaheadEnd)
+    : [];
+
   const statuses = await Promise.all(
     config.studios.map(async (studio) => {
       const reservationEvents = await fetchEvents(
@@ -372,7 +439,7 @@ export async function getAllStudioStatuses(
         reservationTimeMin,
         reservationTimeMax
       );
-      return computeStudioStatus(
+      const status = await computeStudioStatus(
         studio,
         allCleaningEvents,
         reservationEvents,
@@ -381,6 +448,36 @@ export async function getAllStudioStatuses(
         lookback,
         lookahead
       );
+
+      // このスタジオ宛てのロケハン予定が1件もなければ、追加の予約取得は行わない
+      const matchedRokehan = allRokehanEvents.filter((ev) =>
+        isCleaningForStudio(ev, studio)
+      );
+      if (matchedRokehan.length === 0) return status;
+
+      // ロケハン重複チェックは清掃チェックと別の(より長い)期間を見るため、
+      // その期間分の予約を改めて取得する
+      const rokehanWindowReservations = await fetchEvents(
+        client,
+        studio.reservationCalendarId,
+        now,
+        rokehanLookaheadEnd
+      );
+      const locationScoutIssues = computeLocationScoutIssues(
+        studio,
+        matchedRokehan,
+        rokehanWindowReservations,
+        now,
+        config
+      );
+      if (locationScoutIssues.length === 0) return status;
+
+      const mergedIssues = [...status.issues, ...locationScoutIssues];
+      return {
+        ...status,
+        issues: mergedIssues,
+        severity: worstSeverity(mergedIssues),
+      };
     })
   );
 

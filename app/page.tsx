@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 type Severity = "ok" | "warning" | "critical_soon" | "critical_active";
 
 type Issue = {
-  kind: "before_first" | "between" | "after_last";
+  kind: "before_first" | "between" | "after_last" | "location_scout";
   severity: Severity;
   message: string;
   fromTime: string | null;
@@ -48,6 +48,22 @@ const SEVERITY_COLOR: Record<Severity, string> = {
   critical_soon: "#dc2626",
   critical_active: "#991b1b",
 };
+
+// ロケハン予定の重複が原因のときは、清掃用の文言だと紛らわしいので専用の表示にする
+const LOCATION_SCOUT_LABEL: Record<Severity, string> = {
+  ok: "問題なし",
+  warning: "ロケハン重複あり",
+  critical_soon: "まもなくロケハン重複",
+  critical_active: "ロケハンと利用が重複",
+};
+
+function badgeLabel(status: StudioStatus): string {
+  const worstIssue = status.issues.find((i) => i.severity === status.severity);
+  if (worstIssue?.kind === "location_scout") {
+    return LOCATION_SCOUT_LABEL[status.severity];
+  }
+  return SEVERITY_LABEL[status.severity];
+}
 
 function isAlarming(s: Severity) {
   return s === "warning" || s === "critical_soon" || s === "critical_active";
@@ -440,7 +456,7 @@ function Dashboard() {
                   background: SEVERITY_COLOR[s.severity],
                 }}
               >
-                {SEVERITY_LABEL[s.severity]}
+                {badgeLabel(s)}
               </div>
             </div>
             {s.issues.length === 0 ? (
@@ -452,15 +468,23 @@ function Dashboard() {
                 {s.issues.map((issue, idx) => (
                   <div key={idx} style={{ fontSize: 13, color: "#cbd5e1", borderTop: idx > 0 ? "1px solid #334155" : "none", paddingTop: idx > 0 ? 8 : 0 }}>
                     <div>{issue.message}</div>
-                    {issue.toTime && (
+                    {issue.kind === "location_scout" ? (
                       <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                        対象の利用開始: {formatTime(issue.toTime)}
+                        ロケハン時間: {formatTime(issue.fromTime)}〜{formatTime(issue.toTime)}
                       </div>
-                    )}
-                    {!issue.toTime && issue.fromTime && (
-                      <div style={{ fontSize: 12, color: "#94a3b8" }}>
-                        利用終了: {formatTime(issue.fromTime)}
-                      </div>
+                    ) : (
+                      <>
+                        {issue.toTime && (
+                          <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                            対象の利用開始: {formatTime(issue.toTime)}
+                          </div>
+                        )}
+                        {!issue.toTime && issue.fromTime && (
+                          <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                            利用終了: {formatTime(issue.fromTime)}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 ))}
