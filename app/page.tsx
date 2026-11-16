@@ -176,6 +176,21 @@ function Dashboard() {
       });
   }, []);
 
+  // ブラウザの更新ボタン(リロード)で開かれた場合は、URLの期間指定を捨てて
+  // 通常監視(入力欄は本日〜)に戻す。ブックマークや共有URLから開いた場合は
+  // リロード扱いにならないので、期間指定はそのまま使われる。
+  useEffect(() => {
+    const nav = performance.getEntriesByType("navigation")[0] as
+      | PerformanceNavigationTiming
+      | undefined;
+    if (nav?.type !== "reload") return;
+    if (!window.location.search.includes("from=")) return;
+    setFromInput(todayJstStr());
+    setToInput(todayJstStr(2));
+    router.replace("/");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function applyRange() {
     const params = new URLSearchParams();
     params.set("from", fromInput);
