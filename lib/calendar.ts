@@ -215,7 +215,8 @@ export async function computeStudioStatus(
   now: Date,
   config: AppConfig,
   lookback: Date, // これより前は清掃を探さない(before_first用の下限)
-  lookahead: Date // これより後は清掃を探さない(after_last用の上限)
+  lookahead: Date, // これより後は清掃を探さない(after_last用の上限)
+  priorReservationEvents: CalEvent[] = [] // 監視範囲より前の予約(before_first の「前回の利用」探し用)
 ): Promise<StudioStatus> {
   // 同じ利用が複数のシステム(自社予約システム、スペースマーケット、インスタベースなど)から
   // 別々の予定として登録され、時間が重なっているケースを1つの利用にまとめる。
@@ -230,9 +231,18 @@ export async function computeStudioStatus(
   }
 
   // ① 最初の利用より前に清掃予定があるか
+  // 前回の利用(監視範囲より前、最大 previousUseLookbackDays 日前まで)が見つかれば、
+  // その利用終了〜最初の利用開始の間の清掃だけを有効とする。
+  // 見つからなければ lookback 以降の清掃であればよい。
   const first = sorted[0];
+  const prevUseEnd = priorReservationEvents
+    .filter((ev) => ev.end.getTime() <= first.start.getTime())
+    .reduce<Date | null>(
+      (latest, ev) => (!latest || ev.end > latest ? ev.end : latest),
+      null
+    );
   const coveredBefore = hasCoveringCleaning(
-    lookback,
+    prevUseEnd ?? lookback,
     first.start,
     cleaningEvents,
     studio,
@@ -417,8 +427,12 @@ export async function getAllStudioStatuses(
   // 清掃を探す範囲: 利用予約を取得する範囲(reservationTimeMin/Max)そのものではなく、
   // 常に前後を rangeLookback/Lookahead 日分広げる。
   // (期間指定の有無にかかわらず、清掃予定だけは指定期間よりずっと前・後にあることがあるため)
+  // 最初の利用の前の清掃は、前回の利用まで遡って探す(最大 previousUseLookbackDays 日)。
+  // 前回の利用がずっと前(例: 12日前)でも、その直後の清掃を見つけられるようにするため。
   const lookback = new Date(
-    reservationTimeMin.getTime() - config.rangeLookbackDays * 24 * 60 * 60 * 1000
+    reservationTimeMin.getTime() -
+      Math.max(config.rangeLookbackDays, config.previousUseLookbackDays) *
+        24 * 60 * 60 * 1000
   );
   const lookahead = new Date(
     reservationTimeMax.getTime() + config.rangeLookaheadDays * 24 * 60 * 60 * 1000
@@ -452,6 +466,12 @@ export async function getAllStudioStatuses(
         reservationTimeMin,
         reservationTimeMax
       );
+      const priorReservationEvents = await fetchEvents(
+        client,
+        studio.reservationCalendarId,
+        lookback,
+        reservationTimeMin
+      );
       const status = await computeStudioStatus(
         studio,
         allCleaningEvents,
@@ -459,7 +479,8 @@ export async function getAllStudioStatuses(
         now,
         config,
         lookback,
-        lookahead
+        lookahead,
+        priorReservationEvents
       );
 
       // このスタジオ宛てのロケハン予定が1件もなければ、追加の予約取得は行わない
